@@ -353,9 +353,10 @@ textarea.copybox{width:100%; min-height:220px; border:1px solid var(--line); bor
         <div class="field">
           <div class="lbl"><span>Uang muka (DP)</span><span class="big-val" id="dpVal"></span></div>
           <input type="range" id="dp" min="25" max="90" step="1" aria-label="DP dalam persen">
-          <div class="scale"><span>25% · minimum syarat</span><span>90%</span></div>
+          <div class="scale"><span id="dpMinLbl">25% · minimum syarat</span><span>90%</span></div>
           <div class="money"><span>Rp</span><input id="dpRp" inputmode="numeric" autocomplete="off" aria-label="DP dalam rupiah"></div>
           <div class="clampmsg" id="dpMsg" hidden></div>
+          <p class="note" id="dpNote" hidden></p>
         </div>
 
         <div class="field">
@@ -376,7 +377,7 @@ textarea.copybox{width:100%; min-height:220px; border:1px solid var(--line); bor
           <div class="lbl"><span>Pembagian margin</span><span class="hint">rata-rata tetap = margin dasar</span></div>
           <div class="seg" id="splitSeg" role="group" aria-label="Cara mengatur pembagian margin">
             <button type="button" data-s="auto">Otomatis<small>minimal lolos analisa</small></button>
-            <button type="button" data-s="manual">Atur sendiri<small>isi salah satu</small></button>
+            <button type="button" data-s="manual">Atur sendiri<small>DP mulai 15%</small></button>
           </div>
           <div class="split2">
             <div class="field" style="gap:4px"><label for="m1" id="lm1" style="font-size:12px">24 bulan pertama</label><div class="mini"><input id="m1" inputmode="decimal" autocomplete="off"><span>%/th</span></div></div>
@@ -486,7 +487,7 @@ textarea.copybox{width:100%; min-height:220px; border:1px solid var(--line); bor
 /* ===== Batas program (pagar Credit Risk) =====
    Pagar 1: margin dasar 3–8% per tahun flat. Pagar 2: saldo kas Rumany tidak boleh minus di bulan mana pun → DITOLAK.
    DP minimal 25%, tenor maksimal 15 tahun (company profile Rumany). */
-const BATAS = { dpMin:.25, dpMax:.90, mMin:.03, mMax:.08, tMin:3, tMax:15 };
+const BATAS = { dpMin:.25, dpMinManual:.15, dpMax:.90, mMin:.03, mMax:.08, tMin:3, tMax:15 };
 const PROGRAMS = {
   dasar:  { id:'dasar', nama:'Skema Dasar', margin:.08, dp:.25, tenor:15, chip:'<span class="chip ok">Ditawarkan pertama</span>',
             desc:'Skema yang wajib ditawarkan pertama ke setiap calon pembeli: DP 25%, margin 8% per tahun flat, tenor sampai 15 tahun.' },
@@ -559,9 +560,11 @@ const S = { prog:'dasar', jenis:'second', harga:15e8, dp:.25, tenor:15, m:.08, s
   akad: now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0'),
   A:{ ...ASUMSI }, cmp:'dp', detail:false, client:!AKSES_PENUH, msg:{}, fit:{ dp:4e8, cic:2e7, gaji:7e7 } };
 function applyProgram(id){ const P = PROGRAMS[id]; S.prog = id; S.dp = P.dp; S.tenor = P.tenor; S.m = P.margin; S.split = 'auto'; S.msg = {}; }
+/* DP minimal: 25% untuk skema program (Otomatis), 15% untuk skema Atur sendiri */
+const dpMinOf = split => (split || S.split) === 'manual' ? BATAS.dpMinManual : BATAS.dpMin;
 const pin = (o = {}) => {
   const T = clamp(Math.round(o.tenor ?? S.tenor), BATAS.tMin, BATAS.tMax);
-  return { harga:o.harga ?? S.harga, dpK:clamp(o.dp ?? S.dp, BATAS.dpMin, BATAS.dpMax), T, m:clamp(o.m ?? S.m, BATAS.mMin, BATAS.mMax),
+  return { harga:o.harga ?? S.harga, dpK:clamp(o.dp ?? S.dp, dpMinOf(o.split), BATAS.dpMax), T, m:clamp(o.m ?? S.m, BATAS.mMin, BATAS.mMax),
     N:clamp(Math.round(S.A.N), 2, 12 * T - 12), dpD:S.A.dpD, k:S.A.k, r:S.A.r, X:S.A.X };
 };
 /* hitung satu skenario; split 'auto' = margin tahap 1 minimal lolos, 'manual' = pakai S.m1 (dibatasi 0 s.d. maksimal) */
@@ -597,7 +600,11 @@ function renderControls(c){
   $('jenisHint').textContent = S.jenis === 'baru' ? 'Rumany membeli dari developer' : 'harga acuan dari appraisal KJPP';
   if (notFocused($('harga'))) $('harga').value = nf.format(S.harga);
   $('hargaChips').innerHTML = [5e8, 75e7, 1e9, 15e8, 2e9].map(v => `<button type="button" data-h="${v}" aria-pressed="${Math.abs(S.harga - v) < 1}">${rpS(v).replace('Rp ', '')}</button>`).join('');
-  setRange($('dp'), Math.round(c.p.dpK * 100), 25, 90);
+  const dmn = Math.round(dpMinOf() * 100), man = S.split === 'manual';
+  $('dp').min = dmn; setRange($('dp'), Math.round(c.p.dpK * 100), dmn, 90);
+  $('dpMinLbl').textContent = man ? '15% · minimum atur sendiri' : '25% · minimum syarat';
+  $('dpNote').hidden = !(man && c.p.dpK < BATAS.dpMin - 1e-9);
+  $('dpNote').innerHTML = `DP di bawah 25% hanya di skema atur sendiri. Cicilan ${c.N} bulan pertama harus lebih besar agar lolos analisa: pakai tombol <b>Minimal lolos</b> di pembagian margin.`;
   $('dpVal').innerHTML = `${pc(c.p.dpK, 1)}<small>${rpS(c.DPk)}</small>`;
   if (notFocused($('dpRp'))) $('dpRp').value = nf.format(Math.round(c.DPk));
   $('dpMsg').hidden = !S.msg.dp; $('dpMsg').textContent = S.msg.dp || '';
@@ -681,8 +688,8 @@ function renderCompare(c){
   let opts;
   if (mode === 'dp'){
     $('cmpSub').textContent = `Tenor ${c.p.T} tahun, margin ${pc(c.p.m)}. Makin besar DP, makin ringan cicilan. Ketuk salah satu untuk memakainya.`;
-    const cur = Math.round(c.p.dpK * 100), set = [25, 30, 40, 50]; if (!set.includes(cur)) set.push(cur); set.sort((a, b) => a - b);
-    opts = set.map(v => ({ key:v, on:v === cur, x:build({ dp:v / 100 }), k:`DP ${v}%${v === 25 ? ' · minimum' : ''}`, v:rp(S.harga * v / 100) }));
+    const cur = Math.round(c.p.dpK * 100), set = S.split === 'manual' ? [15, 20, 25, 30, 40] : [25, 30, 40, 50]; if (!set.includes(cur)) set.push(cur); set.sort((a, b) => a - b);
+    opts = set.map(v => ({ key:v, on:v === cur, x:build({ dp:v / 100 }), k:`DP ${v}%${v === Math.round(dpMinOf() * 100) ? ' · minimum' : ''}`, v:rp(S.harga * v / 100) }));
   } else if (mode === 'tenor'){
     $('cmpSub').textContent = `DP ${pc(c.p.dpK, 1)}, margin ${pc(c.p.m)}. Makin panjang tenor, makin ringan cicilan setelah ${c.N} bulan. Ketuk salah satu untuk memakainya.`;
     const cur = c.p.T, set = [5, 10, 15]; if (!set.includes(cur)) set.push(cur); set.sort((a, b) => a - b);
@@ -728,15 +735,15 @@ function renderFit(c){
   if (notFocused($('fCic'))) $('fCic').value = F.cic ? nf.format(F.cic) : '';
   if (notFocused($('fGaji'))) $('fGaji').value = F.gaji ? nf.format(F.gaji) : '';
   const cap = F.gaji > 0 ? F.gaji * .30 : Infinity, budget = Math.min(F.cic || Infinity, cap);
-  const dpMin = S.harga * BATAS.dpMin, short = dpMin - F.dp;
+  const dpMinP = dpMinOf(), dpMin = S.harga * dpMinP, short = dpMin - F.dp;
   $('fitBudget').innerHTML = isFinite(budget)
     ? `Batas cicilan yang dipakai: <b>${rp(budget)}</b>/bulan` + (F.gaji > 0 && cap < (F.cic || Infinity) ? ` (dibatasi 30% penghasilan ${rp(F.gaji)}).` : '.') + ` Harga rumah ${rp(S.harga)}, DP minimum ${rp(dpMin)}.`
     : 'Isi kemampuan cicil atau penghasilan untuk melihat rekomendasi.';
   const ratioTxt = v => F.gaji > 0 ? pc(v / F.gaji, 1) : '—';
   const card = o => `<div class="fc ${o.good ? 'good' : ''}"><div class="ttl">${o.label}</div>
     <dl>${o.rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl><div class="note">${o.note}</div><div class="ft">${o.chip}${o.btn || ''}</div></div>`;
-  if (short > 0.5){ $('fit').innerHTML = card({ label:'DP belum cukup', rows:[['DP dimiliki', rp(F.dp)], ['DP minimum 25%', rp(dpMin)]], note:`Kurang ${rp(short)}. Arahkan ke Tabungan DP Rumah KSPPS SKI dulu.`, chip:`<span class="chip bad">DP kurang ${rpS(short)}</span>` }); return; }
-  const dpPct = clamp(F.dp / S.harga, BATAS.dpMin, BATAS.dpMax), cards = [];
+  if (short > 0.5){ $('fit').innerHTML = card({ label:'DP belum cukup', rows:[['DP dimiliki', rp(F.dp)], [`DP minimum ${pc(dpMinP)}`, rp(dpMin)]], note:`Kurang ${rp(short)}. Arahkan ke Tabungan DP Rumah KSPPS SKI dulu.`, chip:`<span class="chip bad">DP kurang ${rpS(short)}</span>` }); return; }
+  const dpPct = clamp(F.dp / S.harga, dpMinP, BATAS.dpMax), cards = [];
   for (const T of [15, 10, 5]){
     const x = build({ dp:dpPct, tenor:T }), fits = x.c1 <= budget + 0.5;
     let chip, note, good = false;
@@ -750,7 +757,7 @@ function renderFit(c){
   /* DP terkecil agar cicilan 24 bulan pertama masuk batas (tenor 15 tahun) */
   if (isFinite(budget)){
     const g = d => { const x = build({ dp:d, tenor:15 }); return x.ok ? budget - x.c1 : -1; };
-    const d = solve(g, BATAS.dpMin, BATAS.dpMax);
+    const d = solve(g, dpMinP, BATAS.dpMax);
     if (d != null){ const dd = Math.ceil(d * 100) / 100, x = build({ dp:dd, tenor:15 });
       cards.push(card({ label:'DP yang dibutuhkan agar cocok', good: F.dp >= x.DPk - 0.5, chip: F.dp >= x.DPk - 0.5 ? '<span class="chip ok">Sudah cukup</span>' : `<span class="chip warn">Kurang ${rpS(x.DPk - F.dp)}</span>`,
         note:'Tenor 15 tahun, cicilan 24 bulan pertama pas di batas.', rows:[['DP', `${rp(x.DPk)} (${pc(dd)})`], [`Cicilan 1–${x.N}`, `${rp(x.c1)}/bln`], ['Setelahnya', `${rp(x.c2)}/bln`]],
@@ -844,7 +851,7 @@ function render(){
   const c = build(); lastC = c;
   if (S.split === 'auto') S.m1 = c.m1;
   const P = PROGRAMS[S.prog];
-  $('fenceTxt').innerHTML = `<span><b>${P.nama}</b></span><span>DP <b>min. 25%</b></span><span>Margin dasar <b>3–8%/thn</b> flat</span><span>Tenor <b>maks. 15 tahun</b></span>${S.client ? '<span>Wajib lolos <b>analisa Credit Risk</b></span>' : '<span>Saldo kas minus = <b>DITOLAK</b></span>'}<span><b>Tanpa denda · tanpa sita · tanpa penalti</b></span>`;
+  $('fenceTxt').innerHTML = `<span><b>${P.nama}</b></span><span>DP <b>min. ${S.split === 'manual' ? '15% (atur sendiri)' : '25%'}</b></span><span>Margin dasar <b>3–8%/thn</b> flat</span><span>Tenor <b>maks. 15 tahun</b></span>${S.client ? '<span>Wajib lolos <b>analisa Credit Risk</b></span>' : '<span>Saldo kas minus = <b>DITOLAK</b></span>'}<span><b>Tanpa denda · tanpa sita · tanpa penalti</b></span>`;
   $('dock').className = 'dock' + (c.ok ? '' : ' rej') + ($('dock').classList.contains('away') ? ' away' : '');
   $('dock').innerHTML = c.ok
     ? `<span><span class="k">Cicilan ${c.N} bulan pertama</span><span class="v">${rp(c.c1)}</span></span><span class="r">lalu ${rpS(c.c2)}/bln<span>DP ${pc(c.p.dpK, 0)} · ${c.p.T} tahun</span></span>`
@@ -872,7 +879,7 @@ moneyInput('fGaji', v => { S.fit.gaji = v; }, () => S.fit.gaji);
 $('hargaChips').addEventListener('click', e => { const b = e.target.closest('[data-h]'); if (!b) return; S.harga = Number(b.dataset.h); render(); });
 $('dpRp').addEventListener('input', () => { const el = $('dpRp'), v = parseRp(el.value); el.value = v ? nf.format(v) : '';
   let p = v / S.harga; S.msg.dp = '';
-  if (p < BATAS.dpMin - 1e-9){ S.msg.dp = `DP minimal 25% = ${rp(S.harga * BATAS.dpMin)} sesuai syarat. Tidak bisa di bawah itu.`; p = BATAS.dpMin; }
+  const mn = dpMinOf(); if (p < mn - 1e-9){ S.msg.dp = `DP minimal ${pc(mn)} = ${rp(S.harga * mn)} ${S.split === 'manual' ? 'untuk skema atur sendiri' : 'sesuai syarat. DP di bawah 25% hanya bisa di skema Atur sendiri'}.`; p = mn; }
   if (p > BATAS.dpMax){ S.msg.dp = `DP maksimal di simulator 90% = ${rp(S.harga * BATAS.dpMax)}.`; p = BATAS.dpMax; }
   S.dp = p; render(); });
 $('dpRp').addEventListener('blur', () => { if (lastC) $('dpRp').value = nf.format(Math.round(lastC.DPk)); });
@@ -880,7 +887,9 @@ $('dp').addEventListener('input', e => { S.dp = Number(e.target.value) / 100; S.
 $('tenor').addEventListener('input', e => { S.tenor = Number(e.target.value); render(); });
 $('tSeg').addEventListener('click', e => { const b = e.target.closest('[data-t]'); if (!b) return; S.tenor = Number(b.dataset.t); render(); });
 $('mSeg').addEventListener('click', e => { const b = e.target.closest('[data-m]'); if (!b) return; S.m = Number(b.dataset.m) / 100; render(); });
-$('splitSeg').addEventListener('click', e => { const b = e.target.closest('[data-s]'); if (!b) return; S.split = b.dataset.s; render(); });
+$('splitSeg').addEventListener('click', e => { const b = e.target.closest('[data-s]'); if (!b) return; S.split = b.dataset.s; S.msg.dp = '';
+  if (S.split === 'auto' && S.dp < BATAS.dpMin - 1e-9){ S.dp = BATAS.dpMin; S.msg.dp = 'Mode Otomatis memakai skema program, jadi DP kembali ke minimal 25%.'; }
+  render(); });
 $('m1').addEventListener('input', () => { const v = parseDec($('m1').value); if (v == null) return; S.split = 'manual'; S.m1 = v / 100; render(); });
 $('m2').addEventListener('input', () => { const v = parseDec($('m2').value); if (v == null || !lastC) return; const p = lastC.p;
   S.split = 'manual'; S.m1 = (p.m * p.T - v / 100 * (12 * p.T - p.N) / 12) / (p.N / 12); render(); });
